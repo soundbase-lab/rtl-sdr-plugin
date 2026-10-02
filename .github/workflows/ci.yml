@@ -72,4 +72,7 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci; else npm install; fi
       - name: Boot, handshake, and serve a trace
+        # no dongle on a runner: sweep the fake one, through the real child process
+        env:
+          SB_RTLSDR_MOCK: '1'
         run: npm run smoke

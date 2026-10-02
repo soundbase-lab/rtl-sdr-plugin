@@ -1,12 +1,14 @@
 ---
 name: Bug report
-about: Something in the template itself is wrong or does not work
+about: The plugin does something wrong, or a dongle does not work with it
 labels: bug
 ---
 
 **What happened**
 
 **What you expected**
+
+**Dongle and tuner chip** (the two lines `rtl_test` prints, e.g. `Nooelec, NESDR SMArt v5` and `Found Rafael Micro R820T tuner`)
 
 **Reproduction**
 
