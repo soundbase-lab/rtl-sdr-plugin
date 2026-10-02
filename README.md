@@ -1,285 +1,131 @@
-![SoundBase Plugin Template — the Lab's signal-flask mark, the SoundBase wordmark, and one real sweep from this plugin's synthetic spectrum](.github/banner.svg)
+# RTL-SDR plugin for SoundBase
 
-# SoundBase Plugin Template
+Turns an RTL-SDR dongle (RTL2832U) into a SoundBase spectrum analyzer: the
+dongle appears in the live-scan picker and its sweeps become the trace on the
+plot.
 
-A complete, working SoundBase plugin. Press **Use this template**, run it, and
-you have a device in SoundBase's live-scan picker — it serves a synthetic
-spectrum (a noise floor, two carriers, an intermittent transient) so the whole
-path works before you own any hardware.
-
-Then you replace one file.
+> **Requires librtlsdr.** `brew install librtlsdr` on macOS. The plugin runs
+> the `rtl_tcp` and `rtl_test` tools that formula installs; it finds them on
+> `PATH` and in the usual Homebrew folders. If yours are somewhere else, set
+> **RTL-SDR tools folder** in the plugin's settings, or `SB_RTLSDR_BIN_DIR`.
+>
+> Only one program can hold a dongle. Close SDR++, GQRX or anything else using
+> it before sweeping.
 
 ```sh
 npm install
 npm run doctor      # is everything wired up?
-npm start
-# SB_PLUGIN_READY {"port":54321}
-# [info] template 0.1.0 listening on 127.0.0.1:54321
+npm test            # the contract, against a fake dongle — nothing plugged in
+npm run smoke       # boots as SoundBase does, and sweeps the dongle if one is attached
 ```
+
+## What to expect from it
+
+An RTL-SDR is a receiver, not an analyzer, and three things follow from that.
+
+**It sees about 2 MHz at a time.** A sweep is a walk: tune, capture, FFT, move
+on. Each hop costs about 110 ms, so sweep time grows with span and with nothing
+else:
+
+| Span | Hops | Sweep time |
+|---|---|---|
+| one 8 MHz TV channel | 5 | 0.5 s |
+| 470–616 MHz | 74 | 8 s |
+| 24–1766 MHz (everything an R820T tunes) | 872 | 95 s |
+
+The plugin reports the figure for the current settings as
+`resolved.sweepTimeMs`, so SoundBase does not mistake a slow sweep for a
+stalled device. Resolution bandwidth and point count do not change it.
+
+**Levels are approximate.** The dongle has no absolute reference. For R820T
+and R828D tuners, readings are corrected with a per-gain-step table measured on
+one NESDR SMArt v5 at 470 MHz against a tinySA Ultra+ generator; on that dongle
+at that frequency every gain step then reads within half a dB of the generator.
+Other units and other bands will be a few dB out, other tuner chips use
+librtlsdr's nominal gains, and the device carries a standing *uncalibrated*
+notice saying so. Trim **Level offset** against a known source where absolute
+readings matter.
+
+**It overloads easily.** Eight bits of converter is about 45 dB of range at any
+one gain setting. A strong transmitter nearby clips it and draws signals that
+are not there; the plugin watches for clipped samples and raises an *overload*
+warning. Lower **Tuner gain** when it appears.
+
+## Controls
+
+Declared from the dongle's own tuner when it is opened, and shown beside RBW
+and point count:
+
+| | |
+|---|---|
+| **Tuner gain** | Snaps to the nearest step the tuner has (0–49.6 dB on an R820T). Readings are corrected for it, so changing gain moves the noise floor and the overload point, not the level of a carrier. |
+| **Detector** | `Peak` or `Average` — how the FFT bins that land on one trace point are combined. Peak never hides a narrow carrier between points. |
+| **Level offset** | Added to every reading, ±60 dB. |
+| **Frequency correction** | Crystal error in ppm, ±200. |
+
+RBW is one of seven values from 879 Hz to 56 kHz (the FFT sizes available at
+2.4 MS/s); left on auto it follows the point spacing.
+
+## How it is put together
+
+```
+adapter.js               plans the hops, assembles the trace, speaks the adapter contract
+driver/rtl-tcp.js        owns one rtl_tcp child process and its socket
+driver/spectrum.js       the FFT
+driver/tuners.js         per-tuner frequency range and gain steps, and the level constant
+driver/fake-rtl-sdr.js   a fake dongle, standing in for rtl_tcp and rtl_test
+```
+
+`rtl_tcp` runs as a **child process** rather than libusb being loaded into the
+plugin. A dongle pulled mid-transfer can wedge libusb for good; a child can
+always be killed, and the plugin reports the device failed and stays up. See
+[docs/native-runtimes.md](docs/native-runtimes.md).
+
+A dongle's id is its serial number — `usb:00000001` — because that is the one
+thing about it that is the same on every machine. Dongles sold with identical
+serials get an ordinal (`usb:00000001:2`); `rtl_eeprom -s` gives one a serial of
+its own.
+
+Two details worth knowing before changing the sweep:
+
+- `rtl_tcp` does not mark where in the sample stream a retune took effect. The
+  driver drops the USB transfer the retune lands in and keeps the next whole
+  one, which is where the 110 ms per hop comes from.
+- The converter's resting value shows as a false carrier at the centre of every
+  capture. It is estimated across many captures rather than from each one —
+  per-capture removal deletes a real carrier that happens to sit on a hop's
+  centre — and every sweep shifts its hop centres slightly.
+
+## Working without a dongle
 
 ```sh
-npm test            # the contract, exercised against your adapter
-npm run smoke       # boots main.js as a child process, exactly as the host does
+SB_RTLSDR_MOCK=1 npm start
+SB_RTLSDR_MOCK=1 npm run smoke
 ```
 
-**Never used SoundBase?** Start with
-[docs/soundbase.md](docs/soundbase.md) — what the app is, what the people using
-it are doing, and where your device lands. It is written for someone who will
-never see the SoundBase code.
+Mock mode swaps the librtlsdr tools for `driver/fake-rtl-sdr.js`: one dongle,
+serial `MOCK0001`, streaming at the real rate with a few carriers in a quiet
+band. Everything else — the child process, the socket, the retune timing — is
+the real code. `SB_RTLSDR_MOCK_CARRIERS="518100000:-70,530000000:-45"` places
+carriers; `SB_RTLSDR_MOCK_DONGLES=0` unplugs it.
 
-## What a plugin is
+## Limits
 
-A **network service** that provides devices to SoundBase over a versioned HTTP
-contract. SoundBase spawns it as a child process and supervises it —
-handshake, health, crash-restart, teardown. You write device logic. You never
-write UI, IPC, or HTTP.
-
-```
-soundbase-plugin.json   your identity, products and config fields
-main.js                 shell bootstrap — copy it verbatim, don't edit it
-adapter.js              your device logic. This is the file you replace.
-driver/                 optional: anything protocol-specific adapter.js uses
-```
-
-`@soundbase/plugin-shell` implements the entire contract: the HTTP server on
-`127.0.0.1:0`, the `SB_PLUGIN_READY` stdout handshake, bearer-token auth, SSE
-lifecycle events, sweep-id bookkeeping, `GET /trace` long-polling, and
-trace-mode accumulation at full sweep rate. Your adapter never sees a request.
-
-## Installing the SDK
-
-```sh
-npm install
-```
-
-That is the whole setup. The two SDK packages are on public npm — nothing else
-to fetch, and no SoundBase checkout required.
-
-## Making it yours
-
-**1. Take an id.**
-
-```sh
-npm run rename my-plugin-id -- --name "My Analyzer"
-```
-
-The id appears in four places that must agree — the manifest, every product's
-`deviceTypeId`, `adapter.js`, and the package name. `rename` changes all four.
-Do it before you publish anything: the id is stored in users' saved projects.
-
-**2. Describe your hardware** in `soundbase-plugin.json` — one `products` entry
-per model, plus the config fields SoundBase should render.
-([reference](docs/manifest-reference.md))
-
-**3. Replace `adapter.js`.** It exports `discoverDevices` and one adapter
-factory per module — `createSpectrumAnalyzerAdapter` for a spectrum source,
-`createMonitoringAdapter` for a receiver or IEM transmitter that lands in
-device monitoring. The template ships one synthetic device of each; keep the
-factory your hardware needs:
-
-```js
-// called while SoundBase is enumerating; return currently reachable devices
-export async function discoverDevices(pluginConfig) {
-  return [{ id: 'usb:/dev/tty…', name: 'My Analyzer',
-            product: 'plugin:my-id/model',
-            transport: { kind: 'usb', path: '/dev/tty…' } }];
-}
-
-// one instance per device; device = { id, product, config }
-export function createSpectrumAnalyzerAdapter(device, pluginConfig) {
-  return {
-    async open() {              // connect + identify
-      return {
-        capabilities: { minFrequencyHz, maxFrequencyHz, rbwHz: [...] },
-        identity: { model, firmware },
-      };
-    },
-    async applyConfig(cfg) {    // cfg = { startHz, stopHz, pointCount?, rbwHz?, controls? }
-      return effective;         // echo what the hardware actually accepted
-    },
-    async startSweep(onTrace) { /* call onTrace(ampsDbm: number[]) per sweep */ },
-    async stopSweep() {},
-    async close() {},
-  };
-}
-```
-
-```js
-// a monitored device: push state, apply commands, let the state answer
-export function createMonitoringAdapter(device, pluginConfig) {
-  return {
-    async open() {              // connect, then report everything through this.onState
-      this.onState('frequency', { channels: { 1: 518.1 } });
-      return { channelCount: 1, properties: [ /* PropertyControl descriptors */ ] };
-    },
-    async setProperty({ propertyId, channelIndex, value }) { /* apply, then onState */ },
-    async close() {},
-  };
-}
-```
-
-Full reference: [docs/adapter-reference.md](docs/adapter-reference.md).
-
-**4. Keep the tests passing.** `__tests__/` drives your adapter through the
-real shell over real HTTP. They are written against the *contract*, not against
-the synthetic source, so they keep meaning once your adapter talks to hardware.
-
-## A worked example with a real transport
-
-[`examples/network-analyzer/`](examples/network-analyzer/README.md) is a second
-complete plugin — a networked instrument over TCP — showing everything the
-synthetic one skips: discovery by probing, addressing from device config, a
-driver with its own fake, device controls, clamping, and a socket that dies
-mid-sweep. Its tests run with nothing plugged in.
-
-## Rules that will bite you if you break them
-
-- **Device ids are yours and must be stable across restarts.** `usb:<path>`,
-  `net:<host>` are the conventions the first-party plugins use. They appear in
-  URLs, and a project stores them.
-- **Device addressing arrives explicitly** on `POST /devices`. Never read a
-  device address from your own machine-local state — the same project opened on
-  another machine must work.
-- **Clamp, don't reject.** When a requested RBW or reference level is out of
-  range, snap it and echo what you settled on. The form keeps showing the
-  user's saved value either way; a rejection just looks broken.
-- **Echo the effective config.** `applyConfig`'s return value is what
-  `GET /devices/{id}/configuration` reports, so the host can always read back
-  what is actually in force.
-- **`main.js` stays byte-identical.** If you find yourself editing it, the
-  thing you want almost certainly belongs in `adapter.js`.
-
-`npm run doctor` checks the ones a machine can check.
-
-## Device controls — knobs SoundBase has never heard of
-
-Return `controls` from `open()` and SoundBase renders them beside RBW and point
-count, then hands the values back in `applyConfig`'s `cfg.controls`, keyed by
-the same ids:
-
-```js
-controls: [
-  { id: 'refLevelDbm', type: 'number', label: 'Reference level',
-    unit: 'dBm', default: -20, min: -56, max: 20 },
-  { id: 'detector', type: 'dropdown', label: 'Detector', default: 'peak',
-    choices: [{ id: 'peak', label: 'Peak' }, { id: 'average', label: 'Average' }] },
-]
-```
-
-Nothing between the form and your adapter interprets them — SoundBase never
-learns what a detector is. That means **adding a knob to a shipped plugin needs
-no SoundBase release.** Build them in `open()` so ranges can come from the
-hardware you just identified.
-
-## Native code, and the gotcha that will cost you a week
-
-If your device needs a native library or a language runtime, read
-[docs/native-runtimes.md](docs/native-runtimes.md) before you design anything.
-The short version, learned the hard way on a USRP:
-
-**Put wedge-prone native work in a child process you can kill.** A blocking C
-library that owns a USB device can hang mid-call when someone trips over the
-cable. If that call is in your plugin's process, your plugin is gone and
-SoundBase restarts it. If it is in a child, you `SIGKILL` it, report a clean
-device error, and stay healthy. The process boundary between SoundBase and you
-protects *SoundBase*; you need your own boundary to protect *yourself*.
+- **macOS on Apple silicon only**, because that is the only place it has been
+  run. `platforms` in the manifest says so, and SoundBase enforces it.
+- While a dongle is sweeping, newly attached dongles are not discovered: asking
+  libusb to enumerate risks disturbing the stream. Stop the sweep to add
+  another.
+- Tuner gaps (the E4000's around 1.1–1.25 GHz, the FC2580's between its two
+  bands) are not modelled; a sweep across one shows noise.
 
 ## Documentation
 
-| | |
-|---|---|
-| [soundbase.md](docs/soundbase.md) | The app, the domain, and where your device lands. **Start here.** |
-| [architecture.md](docs/architecture.md) | Process model, lifecycle, supervision, versioning |
-| [getting-started.md](docs/getting-started.md) | Clone to first change, end to end |
-| [adapter-reference.md](docs/adapter-reference.md) | Every adapter method in detail |
-| [manifest-reference.md](docs/manifest-reference.md) | Every manifest field |
-| [http-contract.md](docs/http-contract.md) | The wire, for debugging with `curl` |
-| [testing.md](docs/testing.md) | The three checks, and faking hardware |
-| [running-in-soundbase.md](docs/running-in-soundbase.md) | Install paths, feature flag, logs |
-| [native-runtimes.md](docs/native-runtimes.md) | Native libraries and bundled runtimes |
-| [publishing.md](docs/publishing.md) | Releases, the Lab, licensing |
-| [troubleshooting.md](docs/troubleshooting.md) | Symptom → cause |
-| [glossary.md](docs/glossary.md) | RF and SoundBase vocabulary |
-
-## Scripts
-
-| | |
-|---|---|
-| `npm start` | run the plugin |
-| `npm test` | contract tests through the real shell |
-| `npm run doctor` | is this plugin well-formed? with fixes for anything that isn't |
-| `npm run smoke` | boot as a child process, handshake, sweep — what the host does |
-| `npm run manifest` | validate `soundbase-plugin.json` against the contract schema |
-| `npm run rename <id>` | take an id, in all four places it appears |
-| `npm run pack:release` | build the zip users install, and boot-check it |
-| `npm run bump <x.y.z>` | move the version in every file that carries it; tag and push to release |
-
-## The specification
-
-The normative documents install with your dependencies:
-
-```
-node_modules/@soundbase/plugin-contract/spec/
-  soundbase-plugin.schema.json     validate your manifest against this
-  core.openapi.yaml                the core plugin API
-  spectrum-analyzer.openapi.yaml   the SpectrumAnalyzer module
-  channel-monitoring.openapi.yaml  the ChannelMonitoring module
-  property-control.openapi.yaml    the PropertyControl module
-```
-
-They are not a copy that might have gone stale — they ship inside the contract
-package, so they always describe the shell version your lockfile pins.
-
-Unknown modules and unknown properties are tolerated everywhere, deliberately:
-shipping a plugin must never require a SoundBase release.
-
-## Versioning
-
-Two version numbers that mean different things:
-
-- **`version`** in `soundbase-plugin.json` and `package.json` is *yours*. Semver
-  your plugin however you like.
-- **`template`** records what you started from and should be left alone:
-
-  ```json
-  "template": { "name": "soundbase-plugin-template", "version": "1.0.0" }
-  ```
-
-  It is correct forever *because* it goes stale. When a template release notes
-  a fix to the example error handling, this is what tells you whether it
-  applies to you. Do not bump it to match a template you have not merged.
-
-**`contract` is the only thing that governs compatibility.** Two plugins built
-from different template versions can speak exactly the same contract, and an
-old lineage does not make an incompatible plugin compatible.
-
-**One repository, one plugin.** A release is one zip carrying one
-`soundbase-plugin.json`, and a repository backs exactly one listing on the
-SoundBase Lab — a new version is a new release on that listing, and a second
-plugin needs its own repository.
-
-## Working with Claude
-
-[`CLAUDE.md`](CLAUDE.md) gives Claude Code and other coding agents the contract
-invariants, the file map, and worked prompts for the common tasks —
-implementing discovery, adding a control, wrapping a native driver. It is worth
-reading yourself.
+The plugin model, the contract and the scripts are documented in
+[docs/](docs/README.md); [CLAUDE.md](CLAUDE.md) is the short version. The
+normative specification installs with the dependencies, under
+`node_modules/@soundbase/plugin-contract/spec/`.
 
 ## Licence
 
-This template and `@soundbase/plugin-shell` are licensed under the **Business
-Source License 1.1** — source available, not open source. See `LICENSE` for the
-exact terms, and read the **Additional Use Grant**: it permits developing,
-distributing and operating plugins for SoundBase, including commercially, and
-does not permit using this code with anything that is not SoundBase.
-
-Each version converts automatically to the Change License named in `LICENSE` on
-its Change Date.
-
-Your own plugin code is yours; licence it however you like. The Additional Use
-Grant governs the parts you received under this licence.
-
-## Support
-
-Issues on this repository are for the template itself. For the plugin contract,
-device behaviour, or getting a plugin listed, see the SoundBase Lab.
+Business Source License 1.1 — see `LICENSE`.

@@ -1,7 +1,7 @@
 {
-  "name": "soundbase-plugin-template",
-  "version": "0.1.9",
-  "description": "Starting point for a SoundBase plugin: a synthetic spectrum analyzer served by the plugin shell.",
+  "name": "soundbase-plugin-rtl-sdr",
+  "version": "0.1.0",
+  "description": "SoundBase plugin: an RTL-SDR dongle as a spectrum analyzer.",
   "license": "BUSL-1.1",
   "type": "module",
   "main": "main.js",
