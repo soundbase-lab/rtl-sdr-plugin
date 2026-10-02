@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "license": "BUSL-1.1",
   "platforms": ["darwin-arm64"],
+  "repository": "https://github.com/soundbase-lab/rtl-sdr-plugin",
   "maintainers": [{ "name": "matt dale" }],
   "contract": {
     "core": "1.4",

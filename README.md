@@ -1,8 +1,15 @@
 # RTL-SDR plugin for SoundBase
 
-Turns an RTL-SDR dongle (RTL2832U) into a SoundBase spectrum analyzer: the
-dongle appears in the live-scan picker and its sweeps become the trace on the
-plot.
+Turns a cheap RTL-SDR USB dongle into a spectrum analyzer for
+[SoundBase](docs/soundbase.md): the dongle appears in the live-scan picker and
+its sweeps become the live trace on the coordination plot.
+
+It is a scouting tool, not a measurement instrument — a way to see what is
+on the air in a venue with hardware that fits on a keyring. What it does well
+and where it runs out are both set out below.
+
+Maintained by matt dale at
+[soundbase-lab/rtl-sdr-plugin](https://github.com/soundbase-lab/rtl-sdr-plugin).
 
 > **Requires librtlsdr.** `brew install librtlsdr` on macOS. The plugin runs
 > the `rtl_tcp` and `rtl_test` tools that formula installs; it finds them on
@@ -11,6 +18,55 @@ plot.
 >
 > Only one program can hold a dongle. Close SDR++, GQRX or anything else using
 > it before sweeping.
+
+## Supported hardware
+
+Any dongle built on the **Realtek RTL2832U** that librtlsdr can open. The
+RTL2832U is the half that digitises; what a dongle can tune depends on the
+tuner chip beside it, which the plugin identifies when it opens the dongle and
+reports capabilities for.
+
+| Tuner chip | Tunes | Gain steps | Found in | Status |
+|---|---|---|---|---|
+| Rafael Micro **R820T / R820T2** | 24–1766 MHz | 29, 0–49.6 dB | Nooelec NESDR SMArt, RTL-SDR Blog V3, most current dongles | **Tested**, levels corrected |
+| Rafael Micro **R828D** | 24–1766 MHz | 29, 0–49.6 dB | RTL-SDR Blog V4, Astrometa | Untested; uses the R820T level table |
+| Elonics **E4000** | 52–2200 MHz | 14, −1–42 dB | Older dongles, Nooelec NESDR XTR | Untested |
+| Fitipower **FC0013** | 22–1100 MHz | 23, −9.9–19.7 dB | Older generic dongles | Untested |
+| Fitipower **FC0012** | 22–948.6 MHz | 5, −9.9–19.2 dB | Older generic dongles | Untested |
+| FCI **FC2580** | 146–924 MHz | fixed | Rare | Untested |
+
+**Tested** means one unit: a Nooelec NESDR SMArt v5 (R820T2), on macOS with
+librtlsdr 2.0.2. The others are supported by construction — their ranges and
+gain steps are librtlsdr's own — but nobody has swept one through this plugin.
+An R828D needs librtlsdr 2.0 or later.
+
+Wireless microphones and in-ear monitors live in 470–700 MHz, with some
+systems around 900 MHz and 1.2 GHz. Every tuner above covers the UHF part;
+the R820T and R828D reach all of it up to 1766 MHz.
+
+**Not supported:**
+
+- Anything that is not an RTL2832U: HackRF, Airspy, SDRplay, USRP.
+- Below the tuner's range. The direct-sampling mode some dongles use for HF
+  is not used.
+- The bias tee on dongles that have one. It stays off.
+
+## Using it in SoundBase
+
+SoundBase Desktop runs plugins from its plugins folder — on macOS,
+`~/Library/Application Support/SoundBase Desktop/plugins` — and the plugin
+system has to be enabled for your account.
+[docs/running-in-soundbase.md](docs/running-in-soundbase.md) has the details.
+
+1. Put this folder, with `node_modules/` installed, in the plugins folder.
+2. Enable **RTL-SDR** under **Settings → Plugins**.
+3. Plug in the dongle. In a Coord project, open the plot's **Live Scan Data
+   Settings**; the dongle is listed as **RTL-SDR** followed by its serial.
+
+These dongles run hot in normal use. A short USB extension lead gets one away
+from the computer and into free air.
+
+## Developing
 
 ```sh
 npm install
@@ -39,12 +95,22 @@ stalled device. Resolution bandwidth and point count do not change it.
 
 **Levels are approximate.** The dongle has no absolute reference. For R820T
 and R828D tuners, readings are corrected with a per-gain-step table measured on
-one NESDR SMArt v5 at 470 MHz against a tinySA Ultra+ generator; on that dongle
-at that frequency every gain step then reads within half a dB of the generator.
-Other units and other bands will be a few dB out, other tuner chips use
-librtlsdr's nominal gains, and the device carries a standing *uncalibrated*
-notice saying so. Trim **Level offset** against a known source where absolute
-readings matter.
+one NESDR SMArt v5 at 470 MHz against a tinySA Ultra+ generator, cabled. How
+that dongle then compares with the generator:
+
+| Frequency | Low and mid gain | Above about 33 dB gain |
+|---|---|---|
+| 100 MHz | about 1.8 dB low | 3 to 3.7 dB low |
+| 470 MHz | within 0.3 dB | within 0.5 dB |
+| 600 MHz | about 0.5 dB low | 1 to 2 dB low |
+| 1000 MHz | about 2 dB low | 2.5 to 5 dB low |
+
+No frequency correction is applied: away from 470 MHz the differences are
+about the size of the generator's own accuracy. Other units will differ by a
+few dB, other tuner chips use librtlsdr's nominal gains, and the device
+carries a standing *uncalibrated* notice saying so. Stay at mid gain for
+readings you want to trust, and trim **Level offset** against a known source
+where absolute level matters.
 
 **It overloads easily.** Eight bits of converter is about 45 dB of range at any
 one gain setting. A strong transmitter nearby clips it and draws signals that
