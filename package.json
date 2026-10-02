@@ -1,6 +1,6 @@
 {
   "name": "soundbase-plugin-rtl-sdr",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SoundBase plugin: an RTL-SDR dongle as a spectrum analyzer.",
   "license": "BUSL-1.1",
   "type": "module",

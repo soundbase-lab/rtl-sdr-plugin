@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "rtl-sdr",
   "name": "RTL-SDR",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "BUSL-1.1",
   "platforms": ["darwin-arm64"],
   "repository": "https://github.com/soundbase-lab/rtl-sdr-plugin",
