@@ -15,7 +15,7 @@
   },
   "runtime": { "type": "node", "entrypoint": "main.js" },
   "deployment": ["managed"],
-  "template": { "name": "soundbase-plugin-template", "version": "1.0.11" },
+  "template": { "name": "soundbase-plugin-template", "version": "1.0.12" },
   "products": [
     {
       "deviceTypeId": "plugin:rtl-sdr/rtl2832u",

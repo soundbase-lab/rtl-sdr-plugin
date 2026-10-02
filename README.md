@@ -53,12 +53,17 @@ the R820T and R828D reach all of it up to 1766 MHz.
 
 ## Using it in SoundBase
 
-SoundBase Desktop runs plugins from its plugins folder — on macOS,
-`~/Library/Application Support/SoundBase Desktop/plugins` — and the plugin
-system has to be enabled for your account.
+To run this working copy, quit SoundBase Desktop and start it with
+`SB_PLUGIN_DIRS` set to the folder that *contains* this one:
+
+```sh
+# macOS — this checkout is ~/CODE/rtl-sdr-plugin
+SB_PLUGIN_DIRS="$HOME/CODE" open -a "SoundBase Desktop"
+```
+
 [docs/running-in-soundbase.md](docs/running-in-soundbase.md) has the details.
 
-1. Put this folder, with `node_modules/` installed, in the plugins folder.
+1. Run `npm install` in this folder, then start SoundBase Desktop as above.
 2. Enable **RTL-SDR** under **Settings → Plugins**.
 3. Plug in the dongle. In a Coord project, open the plot's **Live Scan Data
    Settings**; the dongle is listed as **RTL-SDR** followed by its serial.
